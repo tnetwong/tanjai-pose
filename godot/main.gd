@@ -17,7 +17,7 @@ func _ready():
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR; e.ambient_light_color = Color(0.85, 0.87, 0.92); e.ambient_light_energy = 0.4
 	e.tonemap_mode = Environment.TONE_MAPPER_FILMIC; env.environment = e; add_child(env)
 	var sun := DirectionalLight3D.new(); sun.light_energy = 0.85; sun.rotation_degrees = Vector3(-55, 35, 0)
-	sun.shadow_enabled = true; sun.directional_shadow_max_distance = 8; add_child(sun)
+	sun.shadow_enabled = false; sun.directional_shadow_max_distance = 8; add_child(sun)
 	var fill := DirectionalLight3D.new(); fill.light_energy = 0.25; fill.rotation_degrees = Vector3(-20, -140, 0); add_child(fill)
 	var floor := MeshInstance3D.new(); var pm := PlaneMesh.new(); pm.size = Vector2(12, 12); floor.mesh = pm
 	floor.material_override = mat([0.92, 0.92, 0.92], 0.9); add_child(floor)
