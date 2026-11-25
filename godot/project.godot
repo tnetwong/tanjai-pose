@@ -5,8 +5,8 @@ config/name="tanjai-pose"
 run/main_scene="res://main.tscn"
 
 [display]
-window/size/viewport_width=900
-window/size/viewport_height=700
+window/size/viewport_width=1800
+window/size/viewport_height=1400
 
 [rendering]
 renderer/rendering_method="gl_compatibility"

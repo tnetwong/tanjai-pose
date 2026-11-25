@@ -139,7 +139,7 @@ def solve_arm(h, rots, side, target_world, world_R, world_t, end='hand', guess=(
     return R(('Z', -44 * sg), ('X', x[0]), ('Z', x[1] * sg), ('Y', x[2])), R(('X', x[3])), np.sqrt(res.fun), x
 
 
-def solve_arm2(h, rots, side, targets, world_R, world_t, guess=None):
+def solve_arm2(h, rots, side, targets, world_R, world_t, guess=None, twist=80):
     """ไหล่ (X,Z,Y) + ศอก (X) + บิดแขน (Y) + ข้อมือ (X,Z)
     targets: [(bone, 'head'|'tail', จุดโลก, น้ำหนัก)]"""
     from scipy.optimize import minimize
@@ -157,7 +157,7 @@ def solve_arm2(h, rots, side, targets, world_R, world_t, guess=None):
             pw = jp(h, G, b.replace('*', side), end) @ world_R.T + world_t
             e += w * np.sum((pw - np.asarray(p)) ** 2)
         return e + 1e-5 * (x[5] ** 2 + x[6] ** 2)
-    bnds = [(-170, 60), (-30, 90), (-90, 90), (-150, 0), (-80, 80), (-70, 70), (-40, 40)]
+    bnds = [(-170, 60), (-30, 90), (-90, 90), (-150, 0), (-twist, twist), (-70, 70), (-40, 40)]
     starts = [guess or (-70, 10, 0, -40, 0, 0, 0), (-90, 20, 0, -70, 30, 0, 0), (-50, 0, 30, -20, -30, 0, 0), (-110, 30, -30, -90, 0, 20, 0)]
     res = min((minimize(f, np.array(g, float), method='L-BFGS-B', bounds=bnds) for g in starts), key=lambda r: r.fun)
     r = mk(res.x)
@@ -186,3 +186,22 @@ def write_obj(path, v, tri, mask):
         f.write(''.join('v %.5f %.5f %.5f\n' % tuple(p) for p in vv))
         f.write(''.join('vn %.4f %.4f %.4f\n' % tuple(p) for p in nn))
         f.write(''.join('f %d//%d %d//%d %d//%d\n' % (a, a, b, b, c, c) for a, b, c in tt))
+
+
+def solve_bones(h, rots, bones, targets, world_R, world_t, lim=90, reg=1e-4):
+    """IK ทั่วไป: ให้กระดูกใน bones หมุน (X,Z,Y) ต่อจากท่าที่มีอยู่ เพื่อให้ targets [(bone, end, จุดโลก, w)] ตรง"""
+    from scipy.optimize import minimize
+    base = {b: rots.get(b, np.eye(3)) for b in bones}
+    def mk(x):
+        r = dict(rots)
+        for i, b in enumerate(bones):
+            r[b] = R(('X', x[3 * i]), ('Z', x[3 * i + 1]), ('Y', x[3 * i + 2])) @ base[b]
+        return r
+    def f(x):
+        G = skel_G(h, mk(x)); e = 0
+        for b, end, p, w in targets:
+            e += w * np.sum((jp(h, G, b, end) @ world_R.T + world_t - np.asarray(p)) ** 2)
+        return e + reg * np.sum(x ** 2)
+    res = minimize(f, np.zeros(3 * len(bones)), method='L-BFGS-B', bounds=[(-lim, lim)] * (3 * len(bones)))
+    r = mk(res.x)
+    return {b: r[b] for b in bones}, np.sqrt(res.fun)

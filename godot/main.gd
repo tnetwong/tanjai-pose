@@ -11,6 +11,12 @@ func box(size: Vector3, pos: Vector3, c: Array) -> MeshInstance3D:
 	var mi := MeshInstance3D.new(); mi.mesh = b; mi.position = pos; mi.material_override = mat(c, 0.8)
 	return mi
 
+func rod(p: Vector3, q: Vector3, r: float, c: Array) -> MeshInstance3D:
+	var cy := CylinderMesh.new(); cy.top_radius = r; cy.bottom_radius = r; cy.height = p.distance_to(q); cy.radial_segments = 16
+	var mi := MeshInstance3D.new(); mi.mesh = cy; mi.material_override = mat(c, 0.4)
+	mi.basis = Basis(Quaternion(Vector3.UP, (q - p).normalized())); mi.position = (p + q) / 2.0
+	return mi
+
 func _ready():
 	var env := WorldEnvironment.new(); var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR; e.background_color = Color(1, 1, 1)
@@ -31,8 +37,12 @@ func _ready():
 			mi.material_override = mat(p.color); holder.add_child(mi)
 		if meta.bed:
 			var bs = meta.bed_size; var bh = meta.bed_h
-			holder.add_child(box(Vector3(bs[0], bs[1], bs[2]), Vector3(0, bh - bs[1] / 2, 0), [0.50, 0.58, 0.68]))
-			holder.add_child(box(Vector3(bs[0] * 0.9, bh - bs[1], bs[2] * 0.9), Vector3(0, (bh - bs[1]) / 2, 0), [0.55, 0.5, 0.46]))
+			holder.add_child(box(Vector3(bs[0], bs[1], bs[2]), Vector3(0, bh - bs[1] / 2, 0), meta.furn))
+			holder.add_child(box(Vector3(bs[0] * 0.9, bh - bs[1], bs[2] * 0.9), Vector3(0, (bh - bs[1]) / 2, 0), meta.furn_base))
+		for d in meta.get('rods', []):
+			holder.add_child(rod(Vector3(d[0][0], d[0][1], d[0][2]), Vector3(d[1][0], d[1][1], d[1][2]), d[2], d[3]))
+		for b in meta.get('boxes', []):
+			holder.add_child(box(Vector3(b[0][0], b[0][1], b[0][2]), Vector3(b[1][0], b[1][1], b[1][2]), b[2]))
 		var mn := Vector3(meta.min[0], meta.min[1], meta.min[2]); var mx := Vector3(meta.max[0], meta.max[1], meta.max[2])
 		var center := (mn + mx) / 2.0; var diag := (mx - mn).length()
 		for c in meta.cams:
@@ -42,6 +52,12 @@ func _ready():
 			await get_tree().process_frame; await get_tree().process_frame
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(out_dir.path_join("%s-%s.png" % [n, c[0]]))
+			if meta.has("focus"):                  # จุดที่ต้องตัดภาพไปใช้ในแอพ -> พิกัดพิกเซล
+				var f := Vector3(meta.focus[0], meta.focus[1], meta.focus[2])
+				var p0 := cam.unproject_position(f)
+				var p1 := cam.unproject_position(f + cam.global_transform.basis.y * meta.focus_size / 2.0)
+				var fo := FileAccess.open(out_dir.path_join("%s-%s.json" % [n, c[0]]), FileAccess.WRITE)
+				fo.store_string(JSON.stringify({"x": p0.x, "y": p0.y, "half": p0.distance_to(p1)})); fo.close()
 			cam.queue_free()
 		holder.queue_free()
 		await get_tree().process_frame
