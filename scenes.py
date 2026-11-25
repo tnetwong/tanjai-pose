@@ -1,9 +1,11 @@
-"""ฉากท่าตรวจ: คืนค่า list ของ mesh (verts dm ในพิกัดโลก, tri, kind) + กล่องอุปกรณ์"""
+"""ฉากท่าตรวจ: คืน parts (ชื่อ, verts dm พิกัดโลก, tri, mask, สี) + อุปกรณ์ + กล้อง 2 มุม"""
 import numpy as np
-from mhpose import Human, R, rot, skel_G, jp, solve_arm
+from mhpose import Human, R, rot, skel_G, jp, solve_arm2, cloth_masks
 
-BED_H = 6.6     # ความสูงเตียง (dm)
-BED = dict(size=(7.0, 0.8, 19.0))  # กว้าง x หนา x ยาว (dm)
+BED_H = 6.6                       # ความสูงพื้นเตียง (dm)
+BED = (7.0, 0.8, 19.0)            # กว้าง x หนา x ยาว (dm)
+SKIN = (0.72, 0.52, 0.40); BEDTOP = (0.78, 0.82, 0.88); SHORTS = (0.12, 0.20, 0.35)
+SCRUB = (0.45, 0.68, 0.85); PANTS = (0.16, 0.24, 0.40)
 
 _cache = {}
 def human(t):
@@ -11,45 +13,58 @@ def human(t):
     return _cache[t]
 
 ARMS_DOWN = lambda: {'upperarm01.L': R(('Z', -44)), 'upperarm01.R': R(('Z', 44))}
-# แขนแนบลำตัว ฝ่ามือวางบนเตียง (ตอนนอน)
 ARMS_SIDE = lambda: {'upperarm01.L': R(('Z', -44), ('X', 22)), 'upperarm01.R': R(('Z', 44), ('X', 22))}
 
 
-def lay_supine(h, rots):
-    """นอนหงายบนเตียง หัวไป -Z เท้าไป +Z ด้านหลังแตะผิวเตียง"""
+def patient_parts(h, v):
+    m = cloth_masks(h)
+    return [('pt_skin', v, h.tri, ~m['shorts'], SKIN), ('pt_shorts', v, h.tri, m['shorts'], SHORTS)]
+
+
+def examiner_parts(h, v):
+    m = cloth_masks(h)
+    skin = ~(m['top'] | m['pants'])
+    return [('ex_skin', v, h.tri, skin, SKIN), ('ex_top', v, h.tri, m['top'], SCRUB), ('ex_pants', v, h.tri, m['pants'], PANTS)]
+
+
+def supine_world(h):
+    """นอนหงายบนเตียง หัวไป -Z เท้าไป +Z หลังแตะผิวเตียง"""
     Rw = rot('X', -90)
-    v = h.pose(rots) @ Rw.T
-    back = h.pose({})  # ใช้ rest เพื่อหาระดับหลัง
-    vb = back @ Rw.T
-    t = np.array([0, BED_H - vb[:, 1].min(), -vb[:, 2].mean()])
-    return Rw, t
+    vb = h.rest @ Rw.T
+    return Rw, np.array([0, BED_H - vb[:, 1].min() - 0.15, -vb[:, 2].mean()])
+
+
+def standing_world(h, yaw, x, z):
+    Rw = rot('Y', yaw)
+    return Rw, np.array([x, -(h.rest @ Rw.T)[:, 1].min(), z])
 
 
 def scene_slr():
     pt = human('asian-male-old')
-    r = ARMS_SIDE()
-    r['upperleg01.R'] = R(('X', -45))          # ยกขาขวาเหยียดตรง 45 องศา
-    Rw, t = lay_supine(pt, r)
-    vp = pt.pose(r) @ Rw.T + t
-    G = pt.G
-    heel = jp(pt, G, 'foot.R', 'head') @ Rw.T + t
-    knee = jp(pt, G, 'lowerleg01.R', 'head') @ Rw.T + t
-    heel_under = heel + np.array([0, -0.6, 0.3])
-    ld = (heel - knee) / np.linalg.norm(heel - knee)          # แนวขา
-    nf = np.cross(ld, [1, 0, 0]); nf = nf if nf[1] > 0 else -nf  # ด้านหน้าหน้าแข้ง
-    knee_front = knee + nf * 0.65
-    # ผู้ตรวจ ยืนข้างขวาผู้ป่วย หันหน้าเข้าหาเตียง (+X)
+    r = ARMS_SIDE(); r['upperleg01.R'] = R(('X', -45))        # ยกขาขวาเหยียดตรง 45 องศา
+    Rw, t = supine_world(pt)
+    G = skel_G(pt, r)
+    W = lambda b, e='head': jp(pt, G, b, e) @ Rw.T + t
+    knee, ankle = W('lowerleg01.R'), W('foot.R')
+    ld = (ankle - knee) / np.linalg.norm(ankle - knee)               # แนวขา (ไปทางปลายเท้า)
+    nf = np.cross(ld, [1, 0, 0]); nf = nf if nf[1] > 0 else -nf      # ด้านหน้าหน้าแข้ง
+    lat = np.array([-1.0, 0, 0])                                      # ด้านข้างขาขวา (ฝั่งผู้ตรวจ)
     ex = human('asian-female-young')
-    er = ARMS_DOWN()
-    er['spine03'] = R(('X', 10)); er['spine02'] = R(('X', 8))
-    Rx = rot('Y', 90)
-    ex.pose({})
-    foot_y = (ex.rest @ Rx.T)[:, 1].min()
-    tx = np.array([-(BED['size'][0] / 2 + 2.2), -foot_y, knee[2] + 1.5])
-    ua, la, e1, _ = solve_arm(ex, er, 'R', heel_under, Rx, tx, guess=(-70, 10, 0, -40))
-    er['upperarm01.R'], er['lowerarm01.R'] = ua, la
-    ua, la, e2, _ = solve_arm(ex, er, 'L', knee_front, Rx, tx, guess=(-80, 0, 0, -60))
-    er['upperarm01.L'], er['lowerarm01.L'] = ua, la
-    ve = ex.pose(er) @ Rx.T + tx
-    print('slr hand error dm: heel %.2f knee %.2f' % (e1, e2))
-    return [(vp, pt.tri, 'pt', pt.shorts_mask()), (ve, ex.tri, 'ex', ex.shorts_mask())], dict(bed=True)
+    er = ARMS_DOWN(); er['spine03'] = R(('X', 8)); er['spine02'] = R(('X', 6))
+    hip = W('upperleg01.R')
+    Ex, tx = standing_world(ex, 90, -(BED[0] / 2 + 1.6), (hip[2] + knee[2]) / 2 + 0.5)
+    # มือขวาประคองใต้ส้นเท้า: ข้อมือใต้น่องเหนือส้น ปลายนิ้วอ้อมไปใต้ส้นเท้า
+    heel = ankle - nf * 0.5
+    arm, e1, _ = solve_arm2(ex, er, 'R', [('wrist.*', 'head', heel - ld * 1.0 - nf * 0.25, 1),
+                                          ('finger3-3.*', 'tail', heel + ld * 0.45 - nf * 0.35, 1)], Ex, tx)
+    er.update(arm)
+    # มือซ้ายวางทาบหน้าเข่า: ข้อมือด้านนอกเข่า (ฝั่งผู้ตรวจ) ปลายนิ้วพาดข้ามลูกสะบ้าไปด้านใน
+    kf = knee + nf * 0.55
+    arm, e2, _ = solve_arm2(ex, er, 'L', [('wrist.*', 'head', kf + lat * 1.0 - ld * 0.1, 1),
+                                          ('finger3-3.*', 'tail', kf - lat * 0.5, 1)], Ex, tx, guess=(-80, 0, 0, -60, 40, 0, 0))
+    er.update(arm)
+    print('slr hand error (dm): heel %.2f knee %.2f' % (e1, e2))
+    vp = pt.pose(r) @ Rw.T + t
+    ve = ex.pose(er) @ Ex.T + tx
+    return dict(parts=patient_parts(pt, vp) + examiner_parts(ex, ve), bed=True,
+                cams=[('side', (1, 0.15, 0.05)), ('34', (1.2, 0.75, 0.9))])
